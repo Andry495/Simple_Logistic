@@ -2,6 +2,7 @@ package com.example.myapplication.positioning
 
 import android.graphics.PointF
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 data class Anchor(val bssid: String, val x: Float, val y: Float, val distancePx: Float)
 
@@ -20,6 +21,33 @@ object PositioningMath {
     // Linearized least squares trilateration in 2D
     fun trilaterate(anchors: List<Anchor>): PointF? {
         if (anchors.size < 3) return null
+        
+        // Проверяем, что расстояния валидны
+        val validAnchors = anchors.filter { it.distancePx > 0.1f && !it.distancePx.isInfinite() && !it.distancePx.isNaN() }
+        if (validAnchors.size < 3) return null
+        
+        // Используем первые 3-5 анкеров с наилучшим сигналом (наибольшая дистанция = слабый сигнал)
+        val sortedAnchors = validAnchors.sortedByDescending { it.distancePx }.take(5)
+        
+        // Пробуем разные комбинации анкеров для лучшего результата
+        for (startIdx in 0 until (sortedAnchors.size - 2)) {
+            val selectedAnchors = sortedAnchors.subList(startIdx, minOf(startIdx + 4, sortedAnchors.size))
+            val result = trilaterateWithAnchors(selectedAnchors)
+            if (result != null && isValidPosition(result, sortedAnchors)) {
+                return result
+            }
+        }
+        
+        // Fallback: используем центроид взвешенный по расстояниям
+        return weightedCentroid(validAnchors)
+    }
+    
+    /**
+     * Триангуляция с заданным набором анкеров
+     */
+    private fun trilaterateWithAnchors(anchors: List<Anchor>): PointF? {
+        if (anchors.size < 3) return null
+        
         val a0 = anchors[0]
         val A = Array(anchors.size - 1) { DoubleArray(2) }
         val b = DoubleArray(anchors.size - 1)
@@ -40,8 +68,66 @@ object PositioningMath {
         val At = transpose(A)
         val AtA = multiply(At, A)
         val Atb = multiply(At, b)
+        
+        // Проверяем на вырожденный случай (все точки на одной линии)
+        val det = AtA[0][0] * AtA[1][1] - AtA[0][1] * AtA[1][0]
+        if (kotlin.math.abs(det) < 1e-4) return null
+        
         val x = solve2x2(AtA, Atb) ?: return null
-        return PointF(x[0].toFloat(), x[1].toFloat())
+        
+        // Проверяем, что результат валиден
+        val result = PointF(x[0].toFloat(), x[1].toFloat())
+        if (result.x.isNaN() || result.y.isNaN() || result.x.isInfinite() || result.y.isInfinite()) {
+            return null
+        }
+        
+        return result
+    }
+    
+    /**
+     * Проверить, валидна ли вычисленная позиция
+     */
+    private fun isValidPosition(position: PointF, anchors: List<Anchor>): Boolean {
+        // Проверяем, что позиция не слишком далеко от всех анкеров
+        val maxExpectedDistance = anchors.maxOfOrNull { it.distancePx * 2f } ?: Float.MAX_VALUE
+        for (anchor in anchors) {
+            val dx = position.x - anchor.x
+            val dy = position.y - anchor.y
+            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (dist > maxExpectedDistance) {
+                return false
+            }
+        }
+        return true
+    }
+    
+    /**
+     * Взвешенный центроид как fallback метод
+     */
+    private fun weightedCentroid(anchors: List<Anchor>): PointF {
+        var totalWeight = 0.0
+        var weightedX = 0.0
+        var weightedY = 0.0
+        
+        for (anchor in anchors) {
+            // Вес обратно пропорционален расстоянию (чем ближе, тем больше вес)
+            val weight = 1.0 / (anchor.distancePx + 1.0)
+            totalWeight += weight
+            weightedX += anchor.x * weight
+            weightedY += anchor.y * weight
+        }
+        
+        if (totalWeight > 0.0) {
+            return PointF(
+                (weightedX / totalWeight).toFloat(),
+                (weightedY / totalWeight).toFloat()
+            )
+        }
+        
+        // Если все не удалось, возвращаем среднее арифметическое
+        val avgX = anchors.map { it.x }.average().toFloat()
+        val avgY = anchors.map { it.y }.average().toFloat()
+        return PointF(avgX, avgY)
     }
 
     private fun transpose(m: Array<DoubleArray>): Array<DoubleArray> {

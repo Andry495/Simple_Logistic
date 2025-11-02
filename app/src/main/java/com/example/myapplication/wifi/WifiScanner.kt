@@ -54,10 +54,11 @@ class WifiScanner(private val context: Context) {
                 }
 
                 val signals = scanResults
-                    .filter { it.bssid != null && !it.bssid.equals("02:00:00:00:00:00", ignoreCase = true) }
-                    .map {
+                    .filter { it.BSSID != null && !it.BSSID.equals("02:00:00:00:00:00", ignoreCase = true) }
+                    .mapNotNull {
+                        val bssid = it.BSSID ?: return@mapNotNull null
                         ApSignal(
-                            bssid = it.bssid,
+                            bssid = bssid,
                             ssid = it.SSID ?: "Unknown",
                             rssi = it.level,
                             frequency = it.frequency
@@ -96,10 +97,11 @@ class WifiScanner(private val context: Context) {
                 listener.onError("Wi-Fi scan timeout")
             } else {
                 val signals = scanResults
-                    .filter { it.bssid != null && !it.bssid.equals("02:00:00:00:00:00", ignoreCase = true) }
-                    .map {
+                    .filter { it.BSSID != null && !it.BSSID.equals("02:00:00:00:00:00", ignoreCase = true) }
+                    .mapNotNull {
+                        val bssid = it.BSSID ?: return@mapNotNull null
                         ApSignal(
-                            bssid = it.bssid,
+                            bssid = bssid,
                             ssid = it.SSID ?: "Unknown",
                             rssi = it.level,
                             frequency = it.frequency
